@@ -68,6 +68,7 @@ class Tpu_ConvOp<string mnemonic, list<Trait> traits = []> : Tpu_Op<mnemonic,
     BoolAttr:$with_bias,
     DefaultValuedAttr<BoolAttr, "false">:$coeff_merged,
     DefaultValuedAttr<I64Attr, "0">:$use_3ic_optimize,
+    DefaultValuedAttr<I64Attr, "0">:$kernel_zp,
     OptionalAttr<I64ArrayAttr>:$multiplier,
     OptionalAttr<I64ArrayAttr>:$rshift,
     DefaultValuedAttr<Tpu_RequantModeAttr, "tpu::RequantMode::Normal">:$quant_mode,
@@ -98,6 +99,7 @@ def Tpu_Conv3DOp : Tpu_ConvOp<"Conv3D",
     DefaultValuedAttr<F64Attr, "-1.0">:$relu_limit,
     //new param
     BoolAttr:$with_bias,
+    DefaultValuedAttr<I64Attr, "0">:$kernel_zp,
     // OptionalAttr<I64ArrayAttr>:$multiplier,
     // OptionalAttr<I64ArrayAttr>:$rshift,
     // Tpu_RequantModeAttr:$quant_mode,
@@ -194,7 +196,7 @@ def Tpu_AvgPool3DOp:Tpu_PoolOp<"AvgPool3D"> {
 }
 
 def Tpu_AddOp: Tpu_Op<"Add", [SupportFuseRelu, InOutSameDim,
-  DeclareOpInterfaceMethods<LocalGenInterface>]> {
+  DeclareOpInterfaceMethods<LocalGenInterface, ["LocalGenSupport"]>]> {
   let summary = "add operator";
 
   let description = [{
@@ -217,7 +219,7 @@ def Tpu_AddOp: Tpu_Op<"Add", [SupportFuseRelu, InOutSameDim,
 }
 
 def Tpu_MulOp: Tpu_Op<"Mul", [SupportFuseRelu, InOutSameDim,
-  DeclareOpInterfaceMethods<LocalGenInterface>]> {
+  DeclareOpInterfaceMethods<LocalGenInterface, ["LocalGenSupport"]>]> {
   let summary = "mul operator";
 
   let description = [{
