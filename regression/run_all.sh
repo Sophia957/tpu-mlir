@@ -11,8 +11,10 @@ model_list_basic=(
 # classification, _cf = caffe, _tf = tflite, default is onnx
   "densenet121-12"
   "efficientnet"
+  "inception_v3"
   "mobilenet_v2"
   "mobilenet_v2_cf"
+  "mobilenet_v2_tf"
   "resnet18_v1"
   "resnet18_v2"
   "resnet18_cf"
@@ -22,6 +24,7 @@ model_list_basic=(
   "shufflenet_v2"
   "squeezenet1.0"
   "vgg16"
+  # "inception_v4_tf"
 # object detection
   "ssd-12"
   "yolov5s"

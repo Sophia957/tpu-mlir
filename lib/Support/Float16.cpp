@@ -6,9 +6,8 @@
 // third-party components.
 //
 //===----------------------------------------------------------------------===//
-
-#include "tpu_mlir/Support/Float16.h"
 #include "tpu_mlir/Support/MathUtils.h"
+#include "tpu_mlir/Support/Float16.h"
 #include "bitcasts.h"
 #include <math.h>
 
@@ -21,7 +20,7 @@ namespace tpu_mlir {
  *
  * @note The implementation doesn't use any floating-point operations.
  */
-uint32_t fp16_ieee_to_fp32_bits(uint16_t h) {
+static inline uint32_t fp16_ieee_to_fp32_bits(uint16_t h) {
   /*
    * Extend the half-precision floating-point number to 32 bits and shift to the
    * upper part of the 32-bit word:
@@ -119,7 +118,7 @@ uint32_t fp16_ieee_to_fp32_bits(uint16_t h) {
  * mode and no operations on denormals) floating-point operations and bitcasts
  * between integer and floating-point variables.
  */
-float fp16_ieee_to_fp32_value(uint16_t h) {
+static inline float fp16_ieee_to_fp32_value(uint16_t h) {
   /*
    * Extend the half-precision floating-point number to 32 bits and shift to the
    * upper part of the 32-bit word:
@@ -289,7 +288,7 @@ uint16_t fp16_ieee_from_fp32_value(float f) {
  *
  * @note The implementation doesn't use any floating-point operations.
  */
-uint32_t fp16_alt_to_fp32_bits(uint16_t h) {
+static inline uint32_t fp16_alt_to_fp32_bits(uint16_t h) {
   /*
    * Extend the half-precision floating-point number to 32 bits and shift to the
    * upper part of the 32-bit word:
@@ -375,7 +374,7 @@ uint32_t fp16_alt_to_fp32_bits(uint16_t h) {
  * mode and no operations on denormals) floating-point operations and bitcasts
  * between integer and floating-point variables.
  */
-float fp16_alt_to_fp32_value(uint16_t h) {
+static inline float fp16_alt_to_fp32_value(uint16_t h) {
   /*
    * Extend the half-precision floating-point number to 32 bits and shift to the
    * upper part of the 32-bit word:
@@ -491,7 +490,7 @@ float fp16_alt_to_fp32_value(uint16_t h) {
  * mode and no operations on denormals) floating-point operations and bitcasts
  * between integer and floating-point variables.
  */
-uint16_t fp16_alt_from_fp32_value(float f) {
+static inline uint16_t fp16_alt_from_fp32_value(float f) {
   const uint32_t w = fp32_to_bits(f);
   const uint32_t sign = w & UINT32_C(0x80000000);
   const uint32_t shl1_w = w + w;
@@ -548,30 +547,207 @@ static inline bf16 fp32_to_bf16(fp32& single) {
   return res;
 }
 
-uint16_t float_to_bf16_uint16_simple(float x) {
-  bf16 ret = fp32_to_bf16(*(fp32*)&x);
+static inline bf16 fp32_to_bf16_denorm(fp32 src, RoundingMode round_mode) {
+  bf16 dst;
+  if (((src.format.frac >> 16) & 0x7f) == 0x7f) {
+    if ((src.format.frac & 0xffff) == 0x0) { // 0x007f0000
+      dst.bits = 0x0;
+      dst.format.sign = src.format.sign;
+    } else if ((src.format.frac & 0x8000) != 0x8000) { // 0x007f0001-0x007f7fff
+      if ((round_mode == tpu_mlir::ROUNDING_HALF_TO_EVEN) ||
+          (round_mode == tpu_mlir::ROUNDING_HALF_AWAY_FROM_ZERO) ||
+          (round_mode == tpu_mlir::ROUNDING_TOWARDS_ZERO)) {
+        dst.bits = 0x0;
+      } else if (round_mode == tpu_mlir::ROUNDING_DOWN) {
+        if (src.format.sign == 0) {
+          dst.bits = 0x0;
+        } else {
+          dst.bits = 0x80;
+        }
+      } else { // ROUND_UP
+        if (src.format.sign == 0) {
+          dst.bits = 0x80;
+        } else {
+          dst.bits = 0x0;
+        }
+      }
+      dst.format.sign = src.format.sign;
+    } else { // 0x007f8000 - 0x007fffff
+      if ((round_mode == tpu_mlir::ROUNDING_HALF_TO_EVEN) ||
+          (round_mode == tpu_mlir::ROUNDING_HALF_AWAY_FROM_ZERO)) {
+        dst.bits = 0x80;
+      } else if (round_mode == tpu_mlir::ROUNDING_TOWARDS_ZERO) {
+        dst.bits = 0x0;
+      } else if (round_mode == tpu_mlir::ROUNDING_DOWN) {
+        if (src.format.sign == 0) {
+          dst.bits = 0x0;
+        } else {
+          dst.bits = 0x80;
+        }
+      } else { // ROUND_UP
+        if (src.format.sign == 0) {
+          dst.bits = 0x80;
+        } else {
+          dst.bits = 0x0;
+        }
+      }
+      dst.format.sign = src.format.sign;
+    }
+  } else {
+    dst.bits = 0x0;
+    dst.format.sign = src.format.sign;
+  }
+  return dst;
+}
+
+static inline bf16 fp32_to_bf16_all(fp32& src, RoundingMode round_mode) {
+  bf16 dst;
+  fp32 fp32val;
+  long long temp_r, temp_l;
+  if (src.format.exp > 0 && src.format.exp < 255) {
+    uint32_t mant = src.bits & 0xFFFF;
+    if (round_mode == tpu_mlir::ROUNDING_DOWN) {
+      if (src.format.sign == 0) {
+        temp_r = (src.bits >> 16);
+      } else {
+        temp_r = ((src.bits >> 16) + (mant != 0));
+      }
+    } else if (round_mode == tpu_mlir::ROUNDING_UP) {
+      if (src.format.sign == 0) {
+        temp_r = ((src.bits >> 16) + (mant != 0));
+      } else {
+        temp_r = (src.bits >> 16);
+      }
+    } else {
+      temp_r = RightShiftRound<long long>((long long)src.bits, 16, round_mode);
+    }
+    temp_l = temp_r << 16;
+    fp32val.bits = temp_l&0xFFFFFFFF;
+    dst = fp32_to_bf16(fp32val);
+  } else if (src.format.exp == 0xff && src.format.frac != 0) {
+    dst.bits = 0x7fff;
+  } else if (src.format.sign == 0 && src.format.exp == 0xff && src.format.frac == 0) {
+    dst.bits = 0x7f80;
+  } else if (src.format.sign == 1 && src.format.exp == 0xff && src.format.frac == 0) {
+    dst.bits = 0xff80;
+  } else if (src.format.sign == 0 && src.format.exp == 0 && src.format.frac == 0) {
+    dst.bits = 0x0000;
+  } else if (src.format.sign == 1 && src.format.exp == 0 && src.format.frac == 0) {
+    dst.bits = 0x8000;
+  } else {
+    // Denorm fp32, use fp32_to_bf16_denorm
+    dst = fp32_to_bf16_denorm(src, round_mode);
+  }
+  return dst;
+}
+
+/// Cast fp32 data to fp16 data
+/// The round mode is the same with default CPU standard
+/// Default round mode: round to nearest with tie to even
+/// The round mode can be change through fesetround()
+static inline fp16 fp32_to_fp16(fp32 single) {
+  fp16 res;
+  if (single.format.exp == 255 && single.format.frac != 0) {
+    // NAN which had been checked with IC
+    res.bits = UINT16_C(0x7FFF);
+    return res;
+  }
+  res.bits = fp16_ieee_from_fp32_value(single.fval);
+  return res;
+}
+
+static inline fp16 fp32_to_fp16_all(fp32& src, RoundingMode round_mode) {
+  fp16 dst;
+  fp32 fp32val;
+  long long temp_r, temp_l;
+  if (src.format.exp > 112 && src.format.exp < 255) {
+    uint32_t mant = src.bits & 0x1FFF;
+    if (round_mode == tpu_mlir::ROUNDING_DOWN) {
+      if (src.format.sign == 0) {
+        temp_r = (src.bits >> 13);
+      } else {
+        temp_r = ((src.bits >> 13) + (mant != 0));
+      }
+    } else if (round_mode == tpu_mlir::ROUNDING_UP) {
+      if (src.format.sign == 0) {
+        temp_r = ((src.bits >> 13) + (mant != 0));
+      } else {
+        temp_r = (src.bits >> 13);
+      }
+    } else {
+      temp_r = RightShiftRound<long long>(src.bits, 13, round_mode);
+    }
+    temp_l = temp_r << 13;
+    fp32val.bits = temp_l&0xFFFFFFFF;
+    dst = fp32_to_fp16(fp32val);
+  } else if (src.format.exp > 0 && src.format.exp <= 112) {
+    int mant = (src.bits & 0x7FFFFF) + (1 << 23);
+    mant = src.format.sign ? (0 - mant) : mant;
+    int rshift_num = (113 - src.format.exp) + 13;
+    mant = RightShiftRound<long long>(mant, rshift_num, round_mode);
+    mant = src.format.sign ? (0 - mant) : mant;
+    dst.bits = (mant & 0xFFFF);
+    dst.format.sign = src.format.sign;
+  } else if (src.format.exp == 0xff && src.format.frac != 0) {
+    dst.bits = 0x7fff;
+  } else if (src.format.sign == 0 && src.format.exp == 0xff && src.format.frac == 0) {
+    dst.bits = 0x7c00;
+  } else if (src.format.sign == 1 && src.format.exp == 0xff && src.format.frac == 0) {
+    dst.bits = 0xfc00;
+  } else if (src.format.sign == 0 && src.format.exp == 0 && src.format.frac == 0) {
+    dst.bits = 0x0000;
+  } else if (src.format.sign == 1 && src.format.exp == 0 && src.format.frac == 0) {
+    dst.bits = 0x8000;
+  } else {
+    // Denorm fp32, use fp32_to_fp16 directly
+    dst = fp32_to_fp16(src);
+  }
+  return dst;
+}
+
+float f16_to_f32(uint16_t src) {
+  fp16 half = { .bits = src};
+  if (half.format.exp == 31 && half.format.frac != 0) {
+    fp32 res = { 0 };
+    // NAN which had beed checked with IC
+    res.bits = UINT32_C(0xFFC00000);
+    return res.fval;
+  }
+
+  return fp16_ieee_to_fp32_value(src);
+}
+
+float bf16_to_f32(uint16_t src) {
+  unsigned int tmp = src;
+  tmp = tmp << 16;
+  return *((float *)&tmp);
+}
+
+uint16_t f32_to_bf16(float src) {
+  fp32 tmp = { .fval = src };
+  bf16 ret = fp32_to_bf16_all(tmp, tpu_mlir::ROUNDING_HALF_TO_EVEN);
   return ret.bits;
 }
 
-float bf16_uint16_to_float_simple(uint16_t x) {
-  unsigned int tmp1 = x;
-  tmp1 = tmp1 << 16;
-  return *((float *)&tmp1);
+uint16_t f32_to_f16(float src) {
+  fp32 tmp = { .fval = src };
+  fp16 ret = fp32_to_fp16_all(tmp, tpu_mlir::ROUNDING_HALF_TO_EVEN);
+  return ret.bits;
 }
 
 void f32_to_f16(float *p_src, float *p_dst, int num) {
 #pragma omp parallel for schedule(static, omp_schedule(num))
   for (int i = 0; i < num; i++) {
-    uint16_t tmp = fp16_alt_from_fp32_value(p_src[i]);
-    p_dst[i] = fp16_alt_to_fp32_value(tmp);
+    uint16_t tmp = f32_to_f16(p_src[i]);
+    p_dst[i] = f16_to_f32(tmp);
   }
 }
 
 void f32_to_bf16(float *p_src, float *p_dst, int num) {
 #pragma omp parallel for schedule(static, omp_schedule(num))
   for (int i = 0; i < num; i++) {
-    uint16_t tmp = float_to_bf16_uint16_simple(p_src[i]);
-    p_dst[i] = bf16_uint16_to_float_simple(tmp);
+    uint16_t tmp = f32_to_bf16(p_src[i]);
+    p_dst[i] = bf16_to_f32(tmp);
   }
 }
 
